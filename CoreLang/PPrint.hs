@@ -10,41 +10,7 @@ module CoreLang.PPrint
 ) where
 
 import CoreLang.Language
-
--- = Iseq ADT used for pretty printing
-
-data Iseq = INil
-          | IStr String
-          | IAppend Iseq Iseq
-          | IIndent Iseq
-          | INewline
-
-iIndent :: Iseq -> Iseq
-iIndent iseq = IIndent iseq
-
-iNewline :: Iseq
-iNewline = INewline
-
-iNil :: Iseq
-iNil = INil
-
-iStr :: String -> Iseq
-iStr str = IStr str
-
-iAppend :: Iseq -> Iseq -> Iseq
-iAppend seq1 seq2 = IAppend seq1 seq2
-
-iDisplay :: Iseq -> String
-iDisplay s = flatten 0 [(s, 0)]
-
-iConcat :: [Iseq] -> Iseq
-iConcat [] = iNil
-iConcat (s:seqs) = s `iAppend` (iConcat seqs)
-
-iInterleave :: Iseq -> [Iseq] -> Iseq
-iInterleave sep seqs = iConcat $ iInterleave' [] seqs
-  where iInterleave' worklist [] = reverse (drop 1 worklist)
-        iInterleave' worklist (s:ss) = iInterleave' (sep:s:worklist) ss
+import CoreLang.ISeq
 
 -- = Beginning of pretty print code
 
@@ -110,24 +76,6 @@ pprDefns defns = iInterleave sep (map pprDefn defns)
 pprDefn :: (Name, CoreExpr) -> Iseq
 pprDefn (name, expr) =
   iConcat [iStr name, iStr " = ", iIndent (pprExpr expr 0)]
-
-space :: Int -> String
-space n = take n $ repeat ' '
-
-flatten :: Int                -- ^ Current column
-            -> [(Iseq, Int)]  -- ^ Work list
-            -> String
-flatten _ ((INewline, indent) : seqs) =
-  '\n' : (space indent) ++ (flatten indent seqs)
-flatten col ((IIndent s, _) : seqs) =
-  flatten col ((s, col) : seqs)
-flatten col ((INil, _) : seqs) =
-  flatten col seqs
-flatten col ((IStr str, _) : seqs) =
-  str ++ flatten (col+length str) seqs
-flatten col ((IAppend seq1 seq2, indent) : seqs) =
-  flatten col ((seq1, indent) : (seq2, indent) : seqs)
-flatten _ [] = ""
 
 pprProgram :: CoreProgram -> Iseq
 pprProgram scdefns = iInterleave sep $ map pprScDefn scdefns

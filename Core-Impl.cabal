@@ -21,6 +21,9 @@ Library
     CoreLang.PPrint
     CoreLang.Lexer
     CoreLang.Parser
+    CoreLang.Utils
+    CoreLang.ISeq
+    CoreLang.TInst
   Include-Dirs:
     CoreLang
   Build-Tools:      alex
