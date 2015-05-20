@@ -24,6 +24,7 @@ type TiHeap = Heap Node
 data Node = NAp Addr Addr
           | NSupercomb Name [Name] CoreExpr
           | NNum Int
+          | NInd Addr
 
 type TiGlobals = [(Name, Addr)]
 
@@ -40,6 +41,7 @@ applyToStats :: (TiStats -> TiStats) -> TiState -> TiState
 applyToStats f (stack, dump, heap, scDefs, stats) =
   (stack, dump, heap, scDefs, f stats)
 
+-- |Converts a Core AST into an initial state.
 compile :: CoreProgram -> TiState
 compile program =
   (initialStack, initialTiDump, initialHeap, globals, tiStatInitial)
@@ -59,6 +61,7 @@ allocateSc heap (name, args, body) =
   (heap', (name, addr))
   where (heap', addr) = hAlloc heap (NSupercomb name args body)
 
+-- |Evaluates a state, produces a trace.
 eval :: TiState -> [TiState]
 eval state = state : restStates
   where restStates | tiFinal state = []
@@ -84,6 +87,7 @@ step state = dispatch (hLookup heap (head stack))
         dispatch (NNum n) = numStep state n
         dispatch (NAp a1 a2) = apStep state a1 a2
         dispatch (NSupercomb sc args body) = scStep state sc args body
+        dispatch (NInd a1) = step (a1:(tail stack), dump, heap, globals, stats)
 
 numStep :: TiState -> Int -> TiState
 numStep state n = error "Number applied as a function!"
@@ -94,9 +98,11 @@ apStep (stack, dump, heap, globals, stats) a1 a2 =
 
 scStep :: TiState -> Name -> [Name] -> CoreExpr -> TiState
 scStep (stack, dump, heap, globals, stats) scName argNames body =
-  (newStack, dump, newHeap, globals, stats)
+  (newStack, dump, newHeap2, globals, stats)
   where newStack = resultAddr : (drop (length argNames+1) stack)
         (newHeap, resultAddr) = instantiate body heap env
+        aN = stack !! (length argNames)
+        newHeap2 = hUpdate newHeap aN (NInd resultAddr)
         env = argBindings ++ globals
         argBindings = zip argNames (getArgs heap stack)
 
@@ -105,7 +111,7 @@ getArgs heap (sc:stack) =
   map getArg stack
   where getArg addr = arg where (NAp fun arg) = hLookup heap addr
 
-instantiate :: CoreExpr -> TiHeap -> [(Name, Addr)] -> (TiHeap, Addr)
+instantiate :: CoreExpr -> TiHeap -> TiGlobals -> (TiHeap, Addr)
 instantiate (ENum n) heap env = hAlloc heap (NNum n)
 instantiate (EAp e1 e2) heap env =
   hAlloc heap2 (NAp a1 a2)
@@ -120,11 +126,32 @@ instantiate (ELet isrec defs body) heap env =
 instantiate (ECase e alts) heap env =
   error "Can't instantiate case exprs"
 
+instantiateConstr :: Int -> Int -> TiHeap -> TiGlobals -> (TiHeap, Addr)
 instantiateConstr tag arity heap env =
   error "Can't instantiate constructors yet"
-instantiateLet isrec defs body heap env =
-  error "Can't instantiate let(recs)s yet"
 
+instantiateLet :: IsRec -> [(Name, CoreExpr)]
+                        -> CoreExpr
+                        -> TiHeap
+                        -> TiGlobals
+                        -> (TiHeap, Addr)
+instantiateLet _ [] body heap env
+  = instantiate body heap env
+  
+instantiateLet False (def:defs) body heap env
+  = let (name, expr) = def
+        (newHeap, addr) = instantiate expr heap env
+    in  instantiateLet False defs body newHeap ((name, addr):env)
+
+instantiateLet True defs body heap env
+  = let names = map fst defs
+        exprs = map snd defs
+        -- Notice the interesting mutual recursion here.
+        -- This is only possible because of Haskell's laziness.
+        (newHeap, addrs) =
+          mapAccuml (\hp e -> instantiate e hp augEnv) heap exprs
+        augEnv = (zip names addrs)++env
+    in  instantiate body newHeap augEnv
 
 -- |Converts a list of 'TiState' into formatted string.
 showResults :: [TiState] -> String
@@ -134,12 +161,27 @@ showResults states =
 
 showState :: TiState -> Iseq
 showState (stack, dump, heap, globals, stats) =
-  iConcat [ showStack heap stack, iNewline ]
+  iConcat [ showStack heap stack, iNewline,
+            showHeap heap ]
+
+showHeap :: TiHeap -> Iseq
+showHeap heap =
+  iConcat [
+    iStr "Heap [",
+    iIndent (iInterleave iNewline (map showHeapItem addresses)),
+    iStr "]"
+  ]
+  where addresses = hAddresses heap
+        showHeapItem addr = 
+          iConcat [
+            showFWAddr addr, iStr ": ",
+            showNode $ hLookup heap addr
+          ]
 
 showStack :: TiHeap -> TiStack -> Iseq
 showStack heap stack =
   iConcat [
-    iStr "Stk [",
+    iStr "Stk  [",
     iIndent (iInterleave iNewline (map showStackItem stack)),
     iStr "]"
   ]
@@ -157,11 +199,12 @@ showStkNode heap node = showNode node
 
 showNode :: Node -> Iseq
 showNode (NAp a1 a2) =
-  iConcat [ iStr "NAp ", showAddr a1,
-            iStr " ", showAddr a2 ]
+  iConcat [ iStr "NAp ", showFWAddr a1,
+            iStr " ", showFWAddr a2 ]
 showNode (NSupercomb name args body) =
   iStr ("NSupercomb " ++ name)
-showNode (NNum n) = (iStr "NNum ") `iAppend` (iNum n)
+showNode (NNum n) = (iStr "NNum ") `iAppend` (iFWNum 3 n)
+showNode (NInd ind) = (iStr "NInd ") `iAppend` (iFWNum 3 ind)
 
 showAddr :: Addr -> Iseq
 showAddr addr = iStr $ show addr

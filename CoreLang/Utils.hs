@@ -7,6 +7,7 @@ module CoreLang.Utils
   hUpdate,
   hFree,
   hLookup,
+  hAddresses,
   hSize,
   hNull,
   hIsNull,
@@ -38,6 +39,9 @@ hLookup :: Heap a -> Addr -> a
 hLookup (_, _, cts) a =
   let value = lookup a cts
   in fromMaybe (error $ "Can't find " ++ showaddr a ++ " in heap") value
+
+hAddresses :: Heap a -> [Addr]
+hAddresses (_, _, cts) = [addr | (addr, _) <- cts]
 
 showaddr :: Int -> String
 showaddr a = "#" ++ show a
